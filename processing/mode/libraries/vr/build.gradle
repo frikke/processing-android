@@ -1,0 +1,132 @@
+import java.nio.file.Files
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING
+
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+dependencies {
+    compileOnly name: "android"
+    compileOnly "org.p5android:processing-core:${modeVersion}"
+
+// commenting due to issue #718
+//    implementationAar "com.google.vr:sdk-audio:${gvrVersion}"
+//    implementationAar "com.google.vr:sdk-base:${gvrVersion}"
+
+// fix for Issue #718
+    implementation fileTree(dir: "../../../../libs/google-vr/", include: ["*.aar"])
+}
+
+sourceSets {
+    main {
+        java.srcDir("../../../../libs/processing-vr/src/main/java/")
+        resources {
+            srcDir("../../../../libs/processing-vr/src/main/")
+            exclude "AndroidManifest.xml"
+            exclude "**/java/**"
+        }
+    }
+}
+
+java {
+    withSourcesJar()
+}
+
+tasks.named('jar') {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+}
+
+tasks.register("sourceJar", Jar) {
+    from sourceSets.main.allJava
+    archiveClassifier.set("sources")
+}
+
+// Does not work because of Processing-specific tags in source code, such as @webref
+tasks.register("javadocJar", Jar) {
+    dependsOn javadoc
+    archiveClassifier.set("javadoc")
+    from javadoc.destinationDir
+}
+
+artifacts {
+//     archives javadocJar
+    archives sourceJar
+}
+
+tasks.jar {
+    doLast {
+        ant.checksum file: archiveFile.get().asFile
+    }
+}
+
+tasks.clean {
+    doFirst {
+        delete "dist"
+        delete "library/vr.jar"
+    }
+}
+
+tasks.compileJava {
+    doFirst {
+        String[] deps = ["sdk-audio.jar",
+                         "sdk-base.jar",
+                         "sdk-common.jar"]
+        File libFolder = file("library")
+        libFolder.mkdirs()
+        deps.each { String fn ->
+            Files.copy(
+                file("${rootDir}/build/libs/" + fn).toPath(),
+                file("library/" + fn).toPath(),
+                REPLACE_EXISTING
+            )
+        }
+    }
+}
+
+tasks.build {
+    doLast {
+        // Copying vr jar to library folder
+        File vrJar = file("library/vr.jar")
+        vrJar.mkdirs()
+
+        // Need to check the existance of the files before using as the files 
+        // will get generated only if Task ':mode:libraries:vr:jar' is not being skipped
+        // Task ':mode:libraries:vr:jar' will be skipped if source files are unchanged or jar task is UP-TO-DATE
+        def vrJarFile = file("$buildDir/libs/vr.jar")
+        if (vrJarFile.exists()) {
+            Files.copy(vrJarFile.toPath(), vrJar.toPath(), REPLACE_EXISTING)
+        }
+
+        // Renaming artifacts for maven publishing
+        def processingVrJar = file("$buildDir/libs/processing-vr-${vrLibVersion}.jar")
+        if (vrJarFile.exists()) {
+            Files.move(vrJarFile.toPath(), processingVrJar.toPath(), REPLACE_EXISTING)
+        }
+
+        def processingVrSourcesJar = file("$buildDir/libs/processing-vr-${vrLibVersion}-sources.jar")
+        def vrSourcesJar = file("$buildDir/libs/vr-sources.jar")
+        if (vrSourcesJar.exists()) {
+            Files.move(vrSourcesJar.toPath(), processingVrSourcesJar.toPath(), REPLACE_EXISTING)
+        }
+
+        def vrMd5File = file("$buildDir/libs/vr.jar.MD5")
+        def processingVrMd5File = file("$buildDir/libs/processing-vr-${vrLibVersion}.jar.md5")
+        if (vrMd5File.exists()) {
+            Files.move(vrMd5File.toPath(), processingVrMd5File.toPath(), REPLACE_EXISTING)
+        }
+    }
+}
+
+ext {
+    libName = 'processing-vr'
+    libVersion = vrLibVersion
+    libJar = "${buildDir}/libs/${libName}-${libVersion}.jar"
+    libSrc = "${buildDir}/libs/${libName}-${libVersion}-sources.jar"
+    libMd5 = "${buildDir}/libs/${libName}-${libVersion}-sources.jar.md5"
+    libDependencies = [[group: 'org.p5android', name: 'processing-core', version: modeVersion],
+                       [group: 'com.google.vr', name: 'sdk-base', version: gvrVersion],
+                       [group: 'com.google.vr', name: 'sdk-audio', version: gvrVersion]]
+}
+
+apply from: "${rootProject.projectDir}/scripts/publish-module.gradle"
